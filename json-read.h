@@ -297,6 +297,7 @@ JSONREAD_DEF int jsonr_v_array_can_read(JSON_Read_Data *j) {
 JSONREAD_DEF void jsonr_read_stringlen(JSON_Read_Data *j, const char **val, unsigned long *len) {
   static char buf[JSONR_STRINGLEN_READ_BUFFER_SIZE];
   int escaped = 0;
+  char set;
 
   if(j->error) return;
 
@@ -312,6 +313,7 @@ JSONREAD_DEF void jsonr_read_stringlen(JSON_Read_Data *j, const char **val, unsi
   *len = 0;
 
   for(;;) {
+    set = 0;
     _ensure_char(j);
     _advance(j);
 
@@ -339,35 +341,35 @@ JSONREAD_DEF void jsonr_read_stringlen(JSON_Read_Data *j, const char **val, unsi
       jsonr_error(j);
       return;
     }
-    else if(j->c == '\\') {
-      escaped = 1;
-    }
     else if(escaped) {
       if(j->c == '\"') {
-        buf[*len] = '\"';
+        set = '\"';
       }
       else if(j->c == '\\') {
-        buf[*len] = '\\';
+        set = '\\';
       }
       else if(j->c == 'b') {
-        buf[*len] = '\b';
+        set = '\b';
       }
       else if(j->c == 'f') {
-        buf[*len] = '\f';
+        set = '\f';
       }
       else if(j->c == 'n') {
-        buf[*len] = '\n';
+        set = '\n';
       }
       else if(j->c == 'r') {
-        buf[*len] = '\r';
+        set = '\r';
       }
       else if(j->c == 't') {
-        buf[*len] = '\t';
+        set = '\t';
       }
       else {
-        buf[*len] = j->c;
+        set = j->c;
       }
       escaped = 0;
+    }
+    else if(j->c == '\\') {
+      escaped = 1;
     }
     else if(j->c == '\"') {
       *val= buf;
@@ -375,10 +377,13 @@ JSONREAD_DEF void jsonr_read_stringlen(JSON_Read_Data *j, const char **val, unsi
     }
     else {
       escaped = 0;
-      buf[*len] = j->c;
+      set = j->c;
     }
 
-    *len += 1;
+    if(set) {
+      buf[*len] = set;
+      *len += 1;
+    }
   }
 }
 
