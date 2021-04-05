@@ -101,7 +101,6 @@ JSONREAD_DEF int jsonr_v_bool(JSON_Read_Data *j);
 /* Read a string value and advance */
 JSONREAD_DEF void jsonr_v_stringlen(JSON_Read_Data *j, const char **val, unsigned long *len);
 
-
 /* =========================================== */
 /* ============== Low-level API ============== */
 /* =========================================== */
@@ -320,6 +319,26 @@ JSONREAD_DEF void jsonr_read_stringlen(JSON_Read_Data *j, const char **val, unsi
       jsonr_error(j);
       return;
     }
+    else if(j->c == '\b') {
+      jsonr_error(j);
+      return;
+    }
+    else if(j->c == '\f') {
+      jsonr_error(j);
+      return;
+    }
+    else if(j->c == '\n') {
+      jsonr_error(j);
+      return;
+    }
+    else if(j->c == '\r') {
+      jsonr_error(j);
+      return;
+    }
+    else if(j->c == '\t') {
+      jsonr_error(j);
+      return;
+    }
     else if(j->c == '\\') {
       escaped = 1;
     }
@@ -344,6 +363,9 @@ JSONREAD_DEF void jsonr_read_stringlen(JSON_Read_Data *j, const char **val, unsi
       }
       else if(j->c == 't') {
         buf[*len] = '\t';
+      }
+      else {
+        buf[*len] = j->c;
       }
       escaped = 0;
     }
