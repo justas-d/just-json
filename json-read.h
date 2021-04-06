@@ -146,7 +146,14 @@ static void _ensure_char(JSON_Read_Data * j) {
   if(j->read) {
     j->read = 0;
     j->c = fgetc(j->f);
-    j->column++;
+
+    if(j->c == '\n') {
+      j->line++;
+      j->column = 0;
+    }
+    else {
+      j->column++;
+    }
   }
 }
 
@@ -166,11 +173,6 @@ static void _skip_whitespace(JSON_Read_Data * j) {
     _ensure_char(j);
 
     if(isspace(j->c)) {
-      if(j->c == '\n') {
-        j->line++;
-        j->column = 0;
-      }
-
       _advance(j);
     }
     else {
