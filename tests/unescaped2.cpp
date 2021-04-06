@@ -1,5 +1,6 @@
 #define JSONREAD_IMPL
 #include "../json-read.h"
+#include <assert.h>
 
 const char * data = "{ \"text\nwith newline\nnon terminating";
 
@@ -11,12 +12,14 @@ int main() {
   jsonr_init(j, f);
 
   jsonr_v_table(j) {
-    const char * str;
+    char * str;
     unsigned long length;
-    jsonr_v_stringlen(j, &str, &length);
+    jsonr_v_string(j, &str, &length);
 
     printf("%.*s\n", length, str);
   }
+
+  assert(j->error);
 
   fclose(f);
 
