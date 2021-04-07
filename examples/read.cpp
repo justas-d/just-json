@@ -19,14 +19,14 @@ const char * data = R"FOO(
   "last_resource_directory" : "/home/user/stuff/",
   "text_inline" : [{
       "color" : {
-        "w" : 1.000000,
-        "x" : 1.000000,
-        "y" : 1.000000,
-        "z" : 1.000000
+        "w" : -2.000000         ,
+        "x" : -1.000000 ,
+        "y" : -1.000000 ,
+        "z" : -1.000000
       },
       "extents" : {
-        "x" : 6098.551270,
-        "y" : 199.520401
+        "x" : .6098,
+        "y" : +199.520401
       },
       "id" : 1,
       "origin" : {
@@ -76,13 +76,13 @@ static String_Len jsonr_v_string_malloc(JSON_Read_Data * j) {
 
   jsonr_begin_read_string(j);
   while(true) {
-    auto result = jsonr_read_string(j, buffer, buffer_size, &bytes_read);
+    int result = jsonr_read_string(j, buffer, buffer_size, &bytes_read);
 
-    if(result == JSONR_READ_STRINGLEN_WANTS_MORE_MEMORY) {
+    if(result == JSONR_READ_STRING_WANTS_MORE_MEMORY) {
       buffer_size *= 2;
       buffer = (char*)realloc(buffer, buffer_size);
     }
-    else if(result == JSONR_READ_STRINGLEN_DONE) {
+    else if(result == JSONR_READ_STRING_DONE) {
       jsonr_maybe_read_comma(j);
 
       String_Len ret;
@@ -105,25 +105,31 @@ typedef struct {
   float x,y,z,w;
 } v4;
 
+#define jsonr_error_duplicate_key(key_str) \
+  jsonr_error(j, "in '%s': duplicate key: '" key_str "'.", __func__)
+
+#define jsonr_error_missing_key(key_str) \
+  jsonr_error(j, "in '%s': missing key: '" key_str "'.", __func__)
+
 static v2 jsonr_v_v2(JSON_Read_Data *j) {
   int got_x=0, got_y=0;
   v2 ret;
 
   jsonr_v_table(j) {
     if(jsonr_k_case(j, "x")) {
-      if(got_x) { jsonr_error(j); }
+      if(got_x) { jsonr_error_duplicate_key("x"); return {}; };
       ret.x = jsonr_v_number(j);
       got_x = 1;
     }
     else if(jsonr_k_case(j, "y")) {
-      if(got_y) { jsonr_error(j); }
+      if(got_y) { jsonr_error_duplicate_key("y"); return {}; };
       ret.y = jsonr_v_number(j);
       got_y = 1;
     }
   }
 
-  if(!got_x) { jsonr_error(j); }
-  if(!got_y) { jsonr_error(j); }
+  if(!got_x) { jsonr_error_missing_key("x"); return {}; };
+  if(!got_y) { jsonr_error_missing_key("y"); return {}; };
 
   return ret;
 }
@@ -134,37 +140,37 @@ static v4 jsonr_v_v4(JSON_Read_Data *j) {
 
   jsonr_v_table(j) {
     if(jsonr_k_case(j, "x")) {
-      if(got_x) { jsonr_error(j); }
+      if(got_x) { jsonr_error_duplicate_key("x"); return {}; };
       ret.x = jsonr_v_number(j);
       got_x = 1;
     }
     else if(jsonr_k_case(j, "y")) {
-      if(got_y) { jsonr_error(j); }
+      if(got_y) { jsonr_error_duplicate_key("y"); return {}; };
       ret.y = jsonr_v_number(j);
       got_y = 1;
     }
     else if(jsonr_k_case(j, "z")) {
-      if(got_z) { jsonr_error(j); }
+      if(got_z) { jsonr_error_duplicate_key("z"); return {}; };
       ret.z = jsonr_v_number(j);
       got_z = 1;
     }
     else if(jsonr_k_case(j, "w")) {
-      if(got_w) { jsonr_error(j); }
+      if(got_w) { jsonr_error_duplicate_key("w"); return {}; };
       ret.w = jsonr_v_number(j);
       got_w = 1;
     }
   }
 
-  if(!got_x) { jsonr_error(j); }
-  if(!got_y) { jsonr_error(j); }
-  if(!got_z) { jsonr_error(j); }
-  if(!got_w) { jsonr_error(j); }
+  if(!got_x) { jsonr_error_missing_key("x"); return {}; };
+  if(!got_y) { jsonr_error_missing_key("y"); return {}; };
+  if(!got_z) { jsonr_error_missing_key("z"); return {}; };
+  if(!got_w) { jsonr_error_missing_key("w"); return {}; };
 
   return ret;
 }
 
 int main() {
-  auto * f = fmemopen((void*)data, strlen(data), "rb");
+  FILE * f = fmemopen((void*)data, strlen(data), "rb");
 
   fpos_t start;
   fgetpos(f, &start);
@@ -188,6 +194,12 @@ int main() {
   }
 
   if(!got_version) {
+    if(j->error) {
+      printf("Encountered an error during parsing.\n");
+      printf("%.*s\n", j->error_msg_length, j->error_msg);
+      return 1;
+    }
+
     printf("Could not find a version in file\n");
     return 1;
   }
@@ -198,7 +210,7 @@ int main() {
 
     jsonr_v_table(j) {
       if(jsonr_k_case(j, "last_resource_directory")) {
-        auto str = jsonr_v_string_malloc(j);
+        String_Len str = jsonr_v_string_malloc(j);
         printf("last_resource_directory: '%.*s'\n", str.num_bytes, str.str);
         free((void*)str.str);
       }
@@ -248,7 +260,7 @@ int main() {
               printf("  scale.y: %f\n", scale.y);
             }
             else if(jsonr_k_case(j, "text")) {
-              auto str = jsonr_v_string_malloc(j);
+              String_Len str = jsonr_v_string_malloc(j);
               printf("  text: '%.*s'\n", str.num_bytes, str.str);
               free((void*)str.str);
             }
@@ -264,7 +276,8 @@ int main() {
     }
 
     if(j->error) {
-      printf("Encountered an error during parsing\n");
+      printf("Encountered an error during parsing.\n");
+      printf("%.*s\n", j->error_msg_length, j->error_msg);
       return 1;
     }
   }

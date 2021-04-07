@@ -4,9 +4,9 @@
   * Just read json data from a file stream.
   * Strings are escaped (decoded as ascii. no utf8 decode).
   * fgetc, ungetc, ftell, fseek, fscanf are used. 
+  * vnsprintf, snprintf is used for error reporting.
   * No explicit allocations (unless the aformentioned cstdlib funcs decide to allocate.)
   * No formatting or indentation.
-  * 1024*8 (comptime constant) max length strings.
 
   * Usage:
     1. Define JSONREAD_IMPL once while including the file to include the implementation.
@@ -29,6 +29,7 @@ extern "C" {
 #endif
 
 #include <stdio.h>
+#include <stdarg.h>
 
 #ifndef JSONR_STRINGLEN_READ_BUFFER_SIZE
   #define JSONR_STRINGLEN_READ_BUFFER_SIZE (1024*8)
@@ -41,10 +42,13 @@ extern "C" {
 typedef struct {
   FILE * f;
   char c;
-  int error; /* if set to 1: we encountered an error. */
   int read;
   unsigned long line;
   unsigned long column;
+
+  int error; /* if set to 1: we encountered an error. */
+  char * error_msg;
+  unsigned long error_msg_length;
 } JSON_Read_Data;
 
 typedef struct {
@@ -66,8 +70,8 @@ enum {
 };
 
 enum {
-  JSONR_READ_STRINGLEN_WANTS_MORE_MEMORY,
-  JSONR_READ_STRINGLEN_DONE,
+  JSONR_READ_STRING_WANTS_MORE_MEMORY,
+  JSONR_READ_STRING_DONE,
 };
 
 /* Init a read context. You'll want to call this to use any of the API. */
@@ -120,7 +124,7 @@ JSONREAD_DEF void jsonr_v_string(JSON_Read_Data *j, char **val, unsigned long *l
 
 /* Parses and escapes a string "some\ntext" into the given buffer. 
  * Begin reading with jsonr_begin_read_string, then call jsonr_read_string until it returns
- * JSONR_READ_STRINGLEN_DONE. If JSONR_READ_STRINGLEN_WANTS_MORE_MEMORY is returned, the
+ * JSONR_READ_STRING_DONE. If JSONR_READ_STRING_WANTS_MORE_MEMORY is returned, the
  * read function needs more memory. bytes_read doubles as a write cursor, so be careful to properly
  * rebase it if you're not realloc'ing the read buffer.
  * */
@@ -135,7 +139,7 @@ JSONREAD_DEF void jsonr_skip_remaining_string(JSON_Read_Data *j);
 
 /* Report an error. Past this point, every call to jsonr_* becomes a noop until the error flag
   is reset. */
-JSONREAD_DEF void jsonr_error(JSON_Read_Data *j);
+JSONREAD_DEF void jsonr_error(JSON_Read_Data *j, const char * fmt, ...);
 
 /* Begin reading tables/arrays. */
 JSONREAD_DEF int jsonr_v_table_begin(JSON_Read_Data *j);
@@ -163,8 +167,86 @@ JSONREAD_DEF void jsonr_peek_end(JSON_Read_Data *j, JSON_Read_Peek peek);
 #include <ctype.h>
 #include <string.h>
 
-JSONREAD_DEF void jsonr_error(JSON_Read_Data *j) {
+#define _jsonr_error_string_eof(when) \
+  jsonr_error(j, "in '%s': malformed string: encountered EOF while reading string.", __func__);
+
+#define _jsonr_error_unescaped_char(c) \
+  jsonr_error(j, "in '%s': malformed string: encountered unescaped character (codepoint %d) while reading string.", __func__, (int)c);
+
+#define _jsonr_error_unexpected_str(expected, got) \
+  jsonr_error(j, "in '%s': expected character '%s', got '%s'.", __func__, expected, got);
+
+#define _jsonr_error_unexpected_char(expected, got) \
+  jsonr_error(j, "in '%s': expected character '%c', got '%c'.", __func__, expected, got);
+
+JSONREAD_DEF void jsonr_error(JSON_Read_Data *j, const char *fmt, ...) {
+  static const int BUF_SIZE = 1024*16;
+  static char buf[BUF_SIZE];
+  char * cursor = buf;
+  long saved_pos;
+  int i;
+  char c;
+  va_list args;
+  int result;
+  int spaces;
+  int chars_back = 40;
+  int chars_forward = 40;
+  int move_result;
+
+#define CHECK_RESULT { if(result < 0) { j->error_msg = 0; j->error_msg_length = 0; return; } }
+#define REMAINING_BYTES (BUF_SIZE-(cursor-buf))
+
+  result = snprintf(cursor,REMAINING_BYTES,"%llu:%llu: error: ", j->line, j->column);
+  CHECK_RESULT;
+  cursor += result;
+
+  va_start(args, fmt);
+  result = vsnprintf(cursor,REMAINING_BYTES, fmt, args);
+  CHECK_RESULT;
+  cursor += result;
+
+  result = snprintf(cursor,REMAINING_BYTES,"\n  %llu | ", j->line);
+  CHECK_RESULT;
+  spaces = result-1;
+  cursor += result;
+
+  saved_pos = ftell(j->f);
+
+  for(i=0;i<chars_back;i++) {
+    move_result = fseek(j->f, -1, SEEK_CUR);
+    if(move_result != 0) break;
+
+    c = fgetc(j->f);
+
+    if(c==EOF||c=='\r'||c =='\n') {
+      break;
+    }
+
+    fseek(j->f, -1, SEEK_CUR);
+  }
+  chars_back = i;
+
+  for(i=0;i<chars_back+chars_forward;i++) {
+    c = fgetc(j->f);
+    if(c==EOF||c=='\r'||c =='\n') break;
+    *cursor = c; cursor += 1;
+  }
+  *cursor = '\n'; cursor += 1;
+
+  for(i=0;i<spaces+chars_back-1;i++) {
+    *cursor = ' '; cursor += 1;
+  }
+  *cursor = '^'; cursor += 1;
+
+  fseek(j->f, saved_pos, SEEK_SET);
+
   j->error = 1;
+
+  j->error_msg = buf;
+  j->error_msg_length = cursor - buf;
+
+#undef REMAINING_BYTES
+#undef CHECK_RESULT
 }
 
 static void _ensure_char(JSON_Read_Data * j) {
@@ -247,7 +329,7 @@ JSONREAD_DEF JSON_Read_Peek jsonr_peek_begin(JSON_Read_Data *j) {
   peek.pos = ftell(j->f);
   peek.read = j->read;
   if(peek.pos == -1) {
-    jsonr_error(j);
+    jsonr_error(j, "in '%s': ftell failed.", __func__);
   }
 
   return peek;
@@ -260,7 +342,7 @@ JSONREAD_DEF void jsonr_peek_end(JSON_Read_Data *j, JSON_Read_Peek peek) {
   j->read = peek.read;
 
   if(fseek(j->f, peek.pos, SEEK_SET) != 0) {
-    jsonr_error(j);
+    jsonr_error(j, "in '%s': fseek failed", __func__);
   }
 }
 
@@ -283,7 +365,7 @@ JSONREAD_DEF int jsonr_v_table_begin(JSON_Read_Data *j) {
     return 1;
   }
   else if(j->c == EOF) {
-    jsonr_error(j);
+    _jsonr_error_unexpected_str("{", "EOF");
     return 0;
   }
 
@@ -314,7 +396,7 @@ JSONREAD_DEF int jsonr_v_array_begin(JSON_Read_Data *j) {
     return 1;
   }
   else if(j->c == EOF) {
-    jsonr_error(j);
+    _jsonr_error_unexpected_str("[", "EOF");
     return 0;
   }
 
@@ -341,7 +423,7 @@ JSONREAD_DEF void jsonr_begin_read_string(JSON_Read_Data *j) {
   _skip_whitespace(j);
 
   if(j->c != '\"') {
-    jsonr_error(j);
+    _jsonr_error_unexpected_char('\"', j->c);
     return;
   }
 
@@ -352,11 +434,11 @@ JSONREAD_DEF int jsonr_read_string(JSON_Read_Data *j, char *buf, unsigned long b
   int escaped = 0;
   char set;
 
-  if(j->error) return JSONR_READ_STRINGLEN_DONE;
+  if(j->error) return JSONR_READ_STRING_DONE;
 
   for(;;) {
     if(*bytes_read >= buf_length) {
-      return JSONR_READ_STRINGLEN_WANTS_MORE_MEMORY;
+      return JSONR_READ_STRING_WANTS_MORE_MEMORY;
     }
 
     set = 0;
@@ -364,12 +446,12 @@ JSONREAD_DEF int jsonr_read_string(JSON_Read_Data *j, char *buf, unsigned long b
     _advance(j);
 
     if(j->c == EOF) {
-      jsonr_error(j);
-      return JSONR_READ_STRINGLEN_DONE;
+      _jsonr_error_string_eof();
+      return JSONR_READ_STRING_DONE;
     }
     else if(_is_unescaped_char(j->c)) {
-      jsonr_error(j);
-      return JSONR_READ_STRINGLEN_DONE;
+      _jsonr_error_unescaped_char(j->c);
+      return JSONR_READ_STRING_DONE;
     }
     else if(escaped) {
       if(j->c == '\"') {
@@ -402,7 +484,7 @@ JSONREAD_DEF int jsonr_read_string(JSON_Read_Data *j, char *buf, unsigned long b
       escaped = 1;
     }
     else if(j->c == '\"') {
-      return JSONR_READ_STRINGLEN_DONE;
+      return JSONR_READ_STRING_DONE;
     }
     else {
       escaped = 0;
@@ -426,11 +508,11 @@ JSONREAD_DEF void jsonr_skip_remaining_string(JSON_Read_Data *j) {
     _advance(j);
 
     if(j->c == EOF) {
-      jsonr_error(j);
+      _jsonr_error_string_eof();
       return;
     }
     else if(_is_unescaped_char(j->c)) {
-      jsonr_error(j);
+      _jsonr_error_unescaped_char(j->c);
       return;
     }
     else if(escaped) {
@@ -455,7 +537,9 @@ JSONREAD_DEF void jsonr_read_string_fixed_size(JSON_Read_Data *j, char **val, un
   jsonr_begin_read_string(j);
   for(;;) {
     result = jsonr_read_string(j, buf, JSONR_STRINGLEN_READ_BUFFER_SIZE, len);
-    if(result == JSONR_READ_STRINGLEN_WANTS_MORE_MEMORY) {
+    if(j->error) return;
+
+    if(result == JSONR_READ_STRING_WANTS_MORE_MEMORY) {
       jsonr_skip_remaining_string(j);
     }
 
@@ -466,18 +550,22 @@ JSONREAD_DEF void jsonr_read_string_fixed_size(JSON_Read_Data *j, char **val, un
 
 JSONREAD_DEF void jsonr_v_string(JSON_Read_Data *j, char **val, unsigned long *len) {
   jsonr_read_string_fixed_size(j, val, len);
+  if(j->error) return;
+
   jsonr_maybe_read_comma(j);
+  if(j->error) return;
 }
 
 JSONREAD_DEF void jsonr_k(JSON_Read_Data *j, char **key, unsigned long *len) {
   if(j->error) return;
 
   jsonr_read_string_fixed_size(j, key, len);
+  if(j->error) return;
 
   _skip_whitespace(j);
 
   if(j->c != ':') {
-    jsonr_error(j);
+    _jsonr_error_unexpected_char(':', j->c);
     return;
   }
 
@@ -531,6 +619,15 @@ JSONREAD_DEF int jsonr_v_get_type(JSON_Read_Data *j) {
   else if(isdigit(j->c)) {
     return JSONR_V_NUMBER;
   }
+  else if(j->c == '-') {
+    return JSONR_V_NUMBER;
+  }
+  else if(j->c == '+') {
+    return JSONR_V_NUMBER;
+  }
+  else if(j->c == '.') {
+    return JSONR_V_NUMBER;
+  }
   else if(j->c == 't') {
     return JSONR_V_BOOL;
   }
@@ -562,7 +659,7 @@ JSONREAD_DEF double jsonr_v_number(JSON_Read_Data *j) {
   tell_before = ftell(j->f);
 
   if(ungetc(j->c, j->f) != j->c) {
-    jsonr_error(j);
+    jsonr_error(j, "in '%s': ungetc failed.", __func__);
     return 0;
   }
 
@@ -576,34 +673,37 @@ JSONREAD_DEF double jsonr_v_number(JSON_Read_Data *j) {
     return val;
   }
   else if(result != 0) {
-    jsonr_error(j);
+    jsonr_error(j, "in '%s': fscanf read 0 numbers.", __func__);
     return 0;
   }
   else if(result == EOF) {
-    jsonr_error(j);
+    jsonr_error(j, "in '%s': fscanf encountered EOF while reading number.", __func__);
     return 0;
   }
 
-  jsonr_error(j);
+  jsonr_error(j, "in '%s': fscanf failure.", __func__);
   return 0;
 }
+
+#define MATCH_CHAR(ch) \
+  _advance(j); if(j->c != ch) { _jsonr_error_unexpected_char(ch, j->c); return 0; }
 
 JSONREAD_DEF int jsonr_v_bool(JSON_Read_Data *j) {
   if(j->error) return 0;
 
   _skip_whitespace(j);
   if(j->c == 't') {
-    _advance(j); if(j->c != 'r') { jsonr_error(j); return 0; }
-    _advance(j); if(j->c != 'u') { jsonr_error(j); return 0; }
-    _advance(j); if(j->c != 'e') { jsonr_error(j); return 0; }
+    MATCH_CHAR('r');
+    MATCH_CHAR('u');
+    MATCH_CHAR('e');
     jsonr_maybe_read_comma(j);
     return 1;
   }
   else if(j->c == 'f') {
-    _advance(j); if(j->c != 'a') { jsonr_error(j); return 0; }
-    _advance(j); if(j->c != 'l') { jsonr_error(j); return 0; }
-    _advance(j); if(j->c != 's') { jsonr_error(j); return 0; }
-    _advance(j); if(j->c != 'e') { jsonr_error(j); return 0; }
+    MATCH_CHAR('a');
+    MATCH_CHAR('l');
+    MATCH_CHAR('s');
+    MATCH_CHAR('e');
     jsonr_maybe_read_comma(j);
     return 0;
   }
@@ -617,16 +717,18 @@ JSONREAD_DEF int jsonr_v_null(JSON_Read_Data *j) {
 
   _skip_whitespace(j);
   if(j->c == 'n') {
-    _advance(j); if(j->c != 'u') { jsonr_error(j); return 0; }
-    _advance(j); if(j->c != 'l') { jsonr_error(j); return 0; }
-    _advance(j); if(j->c != 'l') { jsonr_error(j); return 0; }
+    MATCH_CHAR('u');
+    MATCH_CHAR('l');
+    MATCH_CHAR('l');
     jsonr_maybe_read_comma(j);
     return 1;
   }
 
-  jsonr_error(j);
+  _jsonr_error_unexpected_char('n', j->c); 
   return 0;
 }
+
+#undef MATCH_CHAR
 
 JSONREAD_DEF void jsonr_v_skip(JSON_Read_Data *j) {
   int type;
@@ -636,9 +738,13 @@ JSONREAD_DEF void jsonr_v_skip(JSON_Read_Data *j) {
   if(j->error) return;
 
   type = jsonr_v_get_type(j);
+  if(j->error) return;
 
   switch(type) {
-    case JSONR_V_INVALID: jsonr_error(j); break; 
+    case JSONR_V_INVALID: {
+      jsonr_error(j, "in '%s': encountered a 'JSONR_V_INVALID' type.", __func__);
+      break;
+    }
     case JSONR_V_NUMBER: jsonr_v_number(j); break;
     case JSONR_V_ARRAY: {
       jsonr_v_array(j) {
@@ -665,7 +771,10 @@ JSONREAD_DEF void jsonr_v_skip(JSON_Read_Data *j) {
 
 JSONREAD_DEF void jsonr_kv_skip(JSON_Read_Data *j) {
   jsonr_k_eat(j);
+  if(j->error) return;
+
   jsonr_v_skip(j);
+  if(j->error) return;
 }
 #endif
 
