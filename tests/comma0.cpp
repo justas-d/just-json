@@ -2,7 +2,7 @@
 #include "../json-read.h"
 #include <assert.h>
 
-const char * data = "{\"a key\": 5.0, \"another key\": 1.0,}";
+const char * data = "{\"";
 
 int main() {
   auto * f = fmemopen((void*)data, strlen(data), "rb");
@@ -12,7 +12,11 @@ int main() {
   jsonr_init(j, f);
 
   jsonr_v_table(j) {
-    jsonr_kv_skip(j);
+    char * str;
+    unsigned long length;
+    jsonr_v_string(j, &str, &length);
+
+    printf("%.*s\n", (int)length, str);
   }
 
   if(j->error) {

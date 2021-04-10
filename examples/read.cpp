@@ -19,7 +19,7 @@ const char * data = R"FOO(
   "last_resource_directory" : "/home/user/stuff/",
   "text_inline" : [{
       "color" : {
-        "w" : -2.000000         ,
+        "w" : -2.000000,
         "x" : -1.000000 ,
         "y" : -1.000000 ,
         "z" : -1.000000
@@ -196,7 +196,7 @@ int main() {
   if(!got_version) {
     if(j->error) {
       printf("Encountered an error during parsing.\n");
-      printf("%.*s\n", j->error_msg_length, j->error_msg);
+      printf("%.*s\n", (int)j->error_msg_length, j->error_msg);
       return 1;
     }
 
@@ -211,7 +211,7 @@ int main() {
     jsonr_v_table(j) {
       if(jsonr_k_case(j, "last_resource_directory")) {
         String_Len str = jsonr_v_string_malloc(j);
-        printf("last_resource_directory: '%.*s'\n", str.num_bytes, str.str);
+        printf("last_resource_directory: '%.*s'\n", (int)str.num_bytes, str.str);
         free((void*)str.str);
       }
       else if(jsonr_k_case(j, "camera_zoom")) {
@@ -261,7 +261,7 @@ int main() {
             }
             else if(jsonr_k_case(j, "text")) {
               String_Len str = jsonr_v_string_malloc(j);
-              printf("  text: '%.*s'\n", str.num_bytes, str.str);
+              printf("  text: '%.*s'\n", (int)str.num_bytes, str.str);
               free((void*)str.str);
             }
             else {
@@ -277,7 +277,7 @@ int main() {
 
     if(j->error) {
       printf("Encountered an error during parsing.\n");
-      printf("%.*s\n", j->error_msg_length, j->error_msg);
+      printf("%.*s\n", (int)j->error_msg_length, j->error_msg);
       return 1;
     }
   }

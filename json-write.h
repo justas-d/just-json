@@ -164,7 +164,7 @@ search:
     }
   }
 
-  fprintf(json->f, "%.*s", length, str);
+  fprintf(json->f, "%.*s", (int)length, str);
 }
 
 JSONWRITE_DEF void jsonw_klen(JSON_Write_Data *json, const char *str, unsigned long length) {
@@ -218,14 +218,14 @@ JSONWRITE_DEF void jsonw_v_array_end(JSON_Write_Data *json) {
 JSONWRITE_DEF void jsonw_v_int(JSON_Write_Data *json, long val) {
   jsonw_maybe_comma(json);
 
-  fprintf(json->f, "%lld", val);
+  fprintf(json->f, "%ld", val);
   json->do_comma = 1;
 }
 
 JSONWRITE_DEF void jsonw_v_uint(JSON_Write_Data *json, unsigned long val) {
   jsonw_maybe_comma(json);
 
-  fprintf(json->f, "%llu", val);
+  fprintf(json->f, "%lu", val);
   json->do_comma = 1;
 }
 

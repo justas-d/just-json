@@ -16,12 +16,13 @@ int main() {
     unsigned long length;
     jsonr_v_string(j, &str, &length);
 
-    printf("%.*s\n", length, str);
+    printf("%.*s\n", (int)length, str);
   }
 
-  assert(j->error);
+  if(j->error) {
+    return 0;
+  }
 
-  fclose(f);
-
-  return 0;
+  assert(false);
+  return 1;
 }

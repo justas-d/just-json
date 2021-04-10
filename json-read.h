@@ -43,6 +43,7 @@ typedef struct {
   FILE * f;
   char c;
   int read;
+  int got_comma;
   unsigned long line;
   unsigned long column;
 
@@ -57,6 +58,7 @@ typedef struct {
   char c;
   long pos;
   int read;
+  int got_comma;
 } JSON_Read_Peek; 
 
 enum {
@@ -96,6 +98,7 @@ JSONREAD_DEF int jsonr_k_case(JSON_Read_Data *j, const char *key);
 
 /* Check if the key under the cursor matches the given string */
 JSONREAD_DEF int jsonr_k_is_stringlen(JSON_Read_Data *j, const char *wants, unsigned long wants_len);
+/* This will call strlen on the key every call, so watch out speed. */
 JSONREAD_DEF int jsonr_k_is(JSON_Read_Data *j, const char *key);
 
 /* Skip a key value pair in a table. */
@@ -193,10 +196,14 @@ JSONREAD_DEF void jsonr_error(JSON_Read_Data *j, const char *fmt, ...) {
   int chars_forward = 40;
   int move_result;
 
+  if(j->error) {
+    return;
+  }
+
 #define CHECK_RESULT { if(result < 0) { j->error_msg = 0; j->error_msg_length = 0; return; } }
 #define REMAINING_BYTES (BUF_SIZE-(cursor-buf))
 
-  result = snprintf(cursor,REMAINING_BYTES,"%llu:%llu: error: ", j->line, j->column);
+  result = snprintf(cursor,REMAINING_BYTES,"%lu:%lu: error: ", j->line, j->column);
   CHECK_RESULT;
   cursor += result;
 
@@ -205,7 +212,7 @@ JSONREAD_DEF void jsonr_error(JSON_Read_Data *j, const char *fmt, ...) {
   CHECK_RESULT;
   cursor += result;
 
-  result = snprintf(cursor,REMAINING_BYTES,"\n  %llu | ", j->line);
+  result = snprintf(cursor,REMAINING_BYTES,"\n  %lu | ", j->line);
   CHECK_RESULT;
   spaces = result-1;
   cursor += result;
@@ -315,6 +322,7 @@ JSONREAD_DEF int jsonr_maybe_read_comma(JSON_Read_Data * j) {
   _skip_whitespace(j);
 
   if(j->c == ',') {
+    j->got_comma = 1;
     _advance(j);
     return 1;
   }
@@ -324,6 +332,7 @@ JSONREAD_DEF int jsonr_maybe_read_comma(JSON_Read_Data * j) {
 JSONREAD_DEF JSON_Read_Peek jsonr_peek_begin(JSON_Read_Data *j) {
   JSON_Read_Peek peek;
   peek.c = j->c;
+  peek.got_comma = j->got_comma;
   peek.line = j->line;
   peek.column = j->column;
   peek.pos = ftell(j->f);
@@ -340,6 +349,7 @@ JSONREAD_DEF void jsonr_peek_end(JSON_Read_Data *j, JSON_Read_Peek peek) {
   j->line = peek.line;
   j->column = peek.column;
   j->read = peek.read;
+  j->got_comma = peek.got_comma;
 
   if(fseek(j->f, peek.pos, SEEK_SET) != 0) {
     jsonr_error(j, "in '%s': fseek failed", __func__);
@@ -361,6 +371,7 @@ JSONREAD_DEF int jsonr_v_table_begin(JSON_Read_Data *j) {
   _skip_whitespace(j);
 
   if(j->c == '{') {
+    j->got_comma = 1;
     _advance(j);
     return 1;
   }
@@ -378,9 +389,24 @@ JSONREAD_DEF int jsonr_v_table_can_read(JSON_Read_Data *j) {
   _skip_whitespace(j);
 
   if(j->c == '}') {
-    _advance(j);
-    jsonr_maybe_read_comma(j);
-    return 0;
+    if(j->got_comma) {
+      j->got_comma = 0;
+      jsonr_error(j, "in '%s': expected another key in table, but the table ended.", __func__);
+      return 0;
+    }
+    else {
+      _advance(j);
+      jsonr_maybe_read_comma(j);
+      return 0;
+    }
+  }
+  else {
+    if(!j->got_comma) {
+      jsonr_error(j, "in '%s': expected comma.", __func__);
+      return 0;
+    }
+
+    j->got_comma = 0;
   }
 
   return 1;
@@ -392,6 +418,7 @@ JSONREAD_DEF int jsonr_v_array_begin(JSON_Read_Data *j) {
   _skip_whitespace(j);
 
   if(j->c == '[') {
+    j->got_comma = 1;
     _advance(j);
     return 1;
   }
@@ -409,9 +436,24 @@ JSONREAD_DEF int jsonr_v_array_can_read(JSON_Read_Data *j) {
   _skip_whitespace(j);
 
   if(j->c == ']') {
-    _advance(j);
-    jsonr_maybe_read_comma(j);
-    return 0;
+    if(j->got_comma) {
+      j->got_comma = 0;
+      jsonr_error(j, "in '%s': expected another value in array, but the array ended.", __func__);
+      return 0;
+    }
+    else {
+      _advance(j);
+      jsonr_maybe_read_comma(j);
+      return 0;
+    }
+  }
+  else {
+    if(!j->got_comma) {
+      jsonr_error(j, "in '%s': expected comma.", __func__);
+      return 0;
+    }
+
+    j->got_comma = 0;
   }
 
   return 1;

@@ -18,7 +18,7 @@ int main() {
       unsigned long length;
       jsonr_v_string(j, &str, &length);
 
-      printf("%.*s\n", length, str);
+      printf("%.*s\n", (int)length, str);
     }
     else {
       jsonr_kv_skip(j);
@@ -26,13 +26,10 @@ int main() {
   }
 
   if(j->error) {
-    printf("%.*s\n", j->error_msg_length, j->error_msg);
-  }
-  else {
-    assert(false);
+    printf("%.*s\n", (int)j->error_msg_length, j->error_msg);
+    return 0;
   }
 
-  fclose(f);
-
-  return 0;
+  assert(false);
+  return 1;
 }
